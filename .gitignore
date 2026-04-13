@@ -3,5 +3,6 @@
 /nba_engine/dist
 /nba_engine/generated_formulas
 /nba_engine/saved_formulas
+/nba_engine/tests
 /nba_engine/__pycache__
 /nba_gen/__pycache__
