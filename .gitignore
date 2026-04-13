@@ -1,5 +1,6 @@
 /nba_data
 /nba_frontend/node_modules
+/nba_engine/dist
 /nba_engine/generated_formulas
 /nba_engine/saved_formulas
 /nba_engine/__pycache__
