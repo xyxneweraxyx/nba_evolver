@@ -157,9 +157,9 @@ export default function BruteForce() {
                     fontSize: 28, color: 'var(--orange-2)', marginBottom: 4 }}>
                     {cfg[key]}
                   </div>
-                  <input type="range" min={1} max={4} step={1}
+                  <input type="range" min={1} max={5} step={1}
                     value={cfg[key]}
-                    onChange={e => set(key)(+e.target.value)} />
+                    onChange={e => set(key)(Math.min(5, Math.max(1, +e.target.value)))} />
                 </div>
               ))}
             </div>
