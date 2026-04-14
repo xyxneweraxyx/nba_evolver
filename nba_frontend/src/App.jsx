@@ -1,21 +1,27 @@
-// App.jsx — Main app shell with 4-page routing
+// App.jsx — Main app shell
 import { useState } from 'react'
-import Global      from './pages/Global'
-import Generate    from './pages/Generate'
-import Formulas    from './pages/Formulas'
+import Global       from './pages/Global'
+import Generate     from './pages/Generate'
+import Formulas     from './pages/Formulas'
 import EvolutionRun from './pages/EvolutionRun'
+import Stats        from './pages/Stats'
+import Dashboard    from './pages/Dashboard'
+import BruteForce   from './pages/BruteForce'
 
 const PAGES = [
-  { id: 'global',   label: 'Overview',    icon: '◈' },
-  { id: 'generate', label: 'Generate',    icon: '⊞' },
-  { id: 'formulas', label: 'Formulas',    icon: '⌥' },
-  { id: 'evolve',   label: 'Evolution',   icon: '⟳' },
+  { id: 'global',    label: 'Overview',   icon: '◈' },
+  { id: 'generate',  label: 'Generate',   icon: '⊞' },
+  { id: 'formulas',  label: 'Formulas',   icon: '⌥' },
+  { id: 'evolve',    label: 'Evolution',  icon: '⟳' },
+  { id: 'dashboard', label: 'Dashboard',  icon: '⊡' },
+  { id: 'brute',     label: 'Brute Force', icon: '⊕' },
+  { id: 'stats',     label: 'Variables',  icon: '§' },
 ]
 
 export default function App() {
   const [page,          setPage]          = useState('global')
-  const [pendingFormula,setPendingFormula] = useState(null)  // formula to send from Generate → Formulas
-  const [activeRun,     setActiveRun]     = useState(null)   // { formulaId, runId }
+  const [pendingFormula,setPendingFormula] = useState(null)
+  const [activeRun,     setActiveRun]     = useState(null)
 
   function handleSendToEvolve(formula) {
     setPendingFormula(formula)
@@ -45,7 +51,6 @@ export default function App() {
               onClick={() => setPage(p.id)}>
               <span className="nav-icon">{p.icon}</span>
               {p.label}
-              {/* Live indicator dots */}
               {p.id === 'evolve' && activeRun && (
                 <span style={{
                   marginLeft: 'auto', width: 7, height: 7, borderRadius: '50%',
@@ -63,25 +68,13 @@ export default function App() {
       </aside>
 
       <main className="main-content">
-        {page === 'global' && (
-          <Global onNavigate={setPage} />
-        )}
-        {page === 'generate' && (
-          <Generate onSendToEvolve={handleSendToEvolve} />
-        )}
-        {page === 'formulas' && (
-          <Formulas
-            pendingFormula={pendingFormula}
-            onOpenRun={handleOpenRun}
-          />
-        )}
-        {page === 'evolve' && (
-          <EvolutionRun
-            formulaId={activeRun?.formulaId}
-            runId={activeRun?.runId}
-            onBack={() => setPage('formulas')}
-          />
-        )}
+        {page === 'global'    && <Global onNavigate={setPage} />}
+        {page === 'generate'  && <Generate onSendToEvolve={handleSendToEvolve} />}
+        {page === 'formulas'  && <Formulas pendingFormula={pendingFormula} onOpenRun={handleOpenRun} />}
+        {page === 'evolve'    && <EvolutionRun formulaId={activeRun?.formulaId} runId={activeRun?.runId} onBack={() => setPage('formulas')} />}
+        {page === 'dashboard' && <Dashboard />}
+        {page === 'brute'     && <BruteForce />}
+        {page === 'stats'     && <Stats />}
       </main>
     </div>
   )

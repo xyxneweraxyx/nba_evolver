@@ -89,6 +89,13 @@ class EvolutionConfig:
     max_tree_size:  int   = 80    # max nodes (0 = unlimited)
     max_tree_depth: int   = 8     # max depth  (0 = unlimited)
 
+    # ── Mutation type controls ─────────────────────────────────────────
+    # Disable specific mutation families to guide evolution direction.
+    # Structural mutations (hoist, subtree, point) are always active.
+    mutate_constants: bool = True  # allow tweaking numeric constants
+    mutate_operators: bool = True  # allow swapping math operators
+    mutate_variables: bool = True  # allow swapping stat variables
+
     # ── Reporting ─────────────────────────────────────────────────────────
     report_every:       int   = 10    # callback every N generations tried
 
@@ -603,7 +610,10 @@ class EvolutionEngine:
                     # Mutate current (not best — avoids jumping around)
                     child_node = mutate(current_node,
                                         max_depth = max(4, current_node.depth()+1),
-                                        strength  = config.mutation_strength)
+                                        strength  = config.mutation_strength,
+                                        allow_constants = config.mutate_constants,
+                                        allow_operators = config.mutate_operators,
+                                        allow_variables = config.mutate_variables)
 
                     child_cf = ast_to_c_formula(child_node)
                     if child_cf is None or not self._engine.validate(child_cf):

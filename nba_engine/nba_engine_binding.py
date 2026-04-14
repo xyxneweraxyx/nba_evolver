@@ -467,8 +467,11 @@ class FormulaEngine:
             ctypes.POINTER(CDataset),
             ctypes.c_int,
             ctypes.c_double,
+            ctypes.c_double,
             ctypes.POINTER(ctypes.c_int),
         ]
+
+        
 
         lib.nba_validate_formula.restype  = ctypes.c_int
         lib.nba_validate_formula.argtypes = [ctypes.POINTER(CFormula)]
@@ -498,7 +501,8 @@ class FormulaEngine:
         return ScoreResult(cs.accuracy, cs.interest, cs.n_games_eval, cs.direction)
 
     def filter(self, formula: Formula, ds: CDataset,
-               block_size: int = 100, min_interest: float = 0.10) -> Tuple[ScoreResult, bool]:
+               block_size: int = 100, min_interest: float = 0.10,
+               start_fraction: float =1.0) -> Tuple[ScoreResult, bool]:
         """
         Apply interest filter with early stopping.
         Returns (ScoreResult, was_eliminated).
@@ -507,6 +511,7 @@ class FormulaEngine:
         cs   = self._lib.nba_filter_formula(
             ctypes.byref(formula._c), ctypes.byref(ds),
             ctypes.c_int(block_size), ctypes.c_double(min_interest),
+            ctypes.c_double(start_fraction),
             ctypes.byref(elim)
         )
         return ScoreResult(cs.accuracy, cs.interest, cs.n_games_eval, cs.direction), bool(elim.value)

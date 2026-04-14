@@ -12,11 +12,18 @@ function interestLabel(v) {
 }
 
 const DEFAULT_EVOL = {
-  mutation_strength: 0.5, attempts_per_gen: 5,
-  min_improvement: 0.0005, eval_block_size: 300,
-  stagnation_limit: 0, max_generations: 0,
-  direction: 'up',
-  max_tree_size: 80, max_tree_depth: 8,
+  mutation_strength:  0.5,
+  attempts_per_gen:   5,
+  min_improvement:    0.000005,  // 0.0005% — very fine-grained
+  eval_block_size:    300,
+  stagnation_limit:   0,          // 0 = infinite
+  max_generations:    0,          // 0 = infinite
+  direction:          'up',
+  max_tree_size:      80,
+  max_tree_depth:     8,
+  mutate_constants:   true,
+  mutate_operators:   true,
+  mutate_variables:   true,
 }
 const GEN_PAGE = 30
 
@@ -25,7 +32,7 @@ const GEN_PAGE = 30
 function EvolutionSidePanel({ evCfg, setEvCfg, showNew, setShowNew, contMode, contTarget,
   startNode, startLabel, starting, error, onStartRun }) {
   function set(k) { return v => setEvCfg(c => ({...c, [k]: v})) }
-  const pct  = v => `${(v*100).toFixed(2)}%`
+  const pct  = v => `${(v*100).toFixed(4)}%`
   const pct2 = v => `${Math.round(v*100)}%`
 
   return (
@@ -83,7 +90,7 @@ function EvolutionSidePanel({ evCfg, setEvCfg, showNew, setShowNew, contMode, co
         <div style={{ color:'rgba(255,255,255,0.35)', fontSize:10, fontFamily:'var(--font-mono)', textTransform:'uppercase', letterSpacing:'0.06em', marginBottom:10 }}>Evaluation</div>
         <div className="slider-row" style={{ gridTemplateColumns:'1fr 1fr' }}>
           <Slider label="Block size"      value={evCfg.eval_block_size}  min={100} max={2000} step={100}    onChange={set('eval_block_size')} />
-          <Slider label="Min improvement" value={evCfg.min_improvement}  min={0.0001} max={0.005} step={0.0001} onChange={set('min_improvement')} format={pct} />
+          <Slider label="Min improvement" value={evCfg.min_improvement}  min={0.000001} max={0.0001} step={0.000001} onChange={set('min_improvement')} format={pct} />
         </div>
       </div>
 
@@ -96,12 +103,35 @@ function EvolutionSidePanel({ evCfg, setEvCfg, showNew, setShowNew, contMode, co
         </div>
       </div>
 
-      {/* Stop conditions */}
+      {/* Mutation type controls */}
       <div style={{ marginBottom:20 }}>
-        <div style={{ color:'rgba(255,255,255,0.35)', fontSize:10, fontFamily:'var(--font-mono)', textTransform:'uppercase', letterSpacing:'0.06em', marginBottom:10 }}>Stop conditions</div>
-        <div className="slider-row" style={{ gridTemplateColumns:'1fr 1fr' }}>
-          <Slider label="Stagnation (0=∞)"  value={evCfg.stagnation_limit}  min={0} max={500} step={10} onChange={set('stagnation_limit')} />
-          <Slider label="Max gen (0=∞)"     value={evCfg.max_generations}   min={0} max={1000} step={50} onChange={set('max_generations')} />
+        <div style={{ color:'rgba(255,255,255,0.35)', fontSize:10, fontFamily:'var(--font-mono)', textTransform:'uppercase', letterSpacing:'0.06em', marginBottom:10 }}>What can mutate</div>
+        <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
+          {[
+            { key:'mutate_constants', label:'Constants',  sub:'Tweak numeric values (e.g. 4.2 → 3.9)' },
+            { key:'mutate_operators', label:'Operators',  sub:'Swap math ops (+, *, max, pow…)' },
+            { key:'mutate_variables', label:'Variables',  sub:'Swap stat variables (net_rtg → w_pct…)' },
+          ].map(({ key, label, sub }) => (
+            <button key={key} onClick={() => setEvCfg(c => ({...c, [key]: !c[key]}))}
+              style={{
+                display:'flex', alignItems:'center', gap:10, width:'100%',
+                padding:'8px 12px', borderRadius:'var(--radius)', cursor:'pointer',
+                border:'1px solid',
+                background:  evCfg[key] ? 'rgba(232,82,10,0.15)' : 'rgba(255,255,255,0.04)',
+                borderColor: evCfg[key] ? 'var(--orange)'         : 'rgba(255,255,255,0.12)',
+              }}>
+              <div style={{
+                width:16, height:16, borderRadius:4, flexShrink:0,
+                background: evCfg[key] ? 'var(--orange)' : 'rgba(255,255,255,0.12)',
+                display:'flex', alignItems:'center', justifyContent:'center',
+                fontSize:10, color:'#fff',
+              }}>{evCfg[key] ? '✓' : ''}</div>
+              <div style={{ textAlign:'left' }}>
+                <div style={{ fontSize:12, color:'#fff', fontWeight:600 }}>{label}</div>
+                <div style={{ fontSize:10, color:'rgba(255,255,255,0.4)', fontFamily:'var(--font-mono)' }}>{sub}</div>
+              </div>
+            </button>
+          ))}
         </div>
       </div>
 
@@ -173,7 +203,7 @@ export default function Formulas({ pendingFormula, onOpenRun }) {
   }
 
   function set(k) { return v => setEvCfg(c => ({...c, [k]: v})) }
-  const pct  = v => `${(v*100).toFixed(2)}%`
+  const pct  = v => `${(v*100).toFixed(4)}%`
   const pct2 = v => `${Math.round(v*100)}%`
 
   async function handleStartRun() {

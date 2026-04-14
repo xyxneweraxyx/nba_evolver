@@ -119,12 +119,27 @@ FormulaScore nba_eval_block(const Formula *f, const Dataset *ds,
 /* Compute interest score for a formula over the full dataset. */
 FormulaScore nba_score_formula(const Formula *f, const Dataset *ds);
 
-/* Fast interest filter: evaluate in blocks of block_size.
-   Eliminates formula early if interest score < min_interest at any block.
-   Returns final FormulaScore (or partial if eliminated early).
-   eliminated = 1 if pruned early, 0 if survived to the end. */
+/* Interest filter with ramping threshold.
+ *
+ * Evaluates in blocks of block_size games. At each checkpoint, checks
+ * cumulative interest against a threshold that ramps from:
+ *   min_interest * start_fraction   (at the first game)
+ * to:
+ *   min_interest                    (at the last game)
+ *
+ * This lets promising formulas survive early blocks where cumulative
+ * statistics are noisy, while still enforcing the full threshold at the end.
+ *
+ * Typical usage:
+ *   start_fraction = 0.5  → threshold starts at half the target and ramps up
+ *   start_fraction = 1.0  → constant threshold (original behaviour)
+ *
+ * Returns final FormulaScore (or partial if eliminated early).
+ * eliminated = 1 if pruned early, 0 if survived to the end.
+ */
 FormulaScore nba_filter_formula(const Formula *f, const Dataset *ds,
                                  int block_size, double min_interest,
+                                 double start_fraction,
                                  int *eliminated);
 
 /* Validate formula (no stack overflow, no underflow, proper termination).

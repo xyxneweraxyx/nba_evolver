@@ -55,6 +55,8 @@ from exploration_engine import (
     ExplorationEngine, ExplorationConfig, ExplorationStats,
     load_summary, load_batch, list_batches, get_formula,
 )
+from formula_dashboard import evaluate_formula_dashboard
+from brute_force_engine import BruteForceEngine, BruteForceConfig, BruteForceStats
 from evolution_engine import (
     EvolutionEngine, EvolutionConfig, EvolutionStats,
     load_best, load_history, list_runs, next_run_id,
@@ -77,15 +79,18 @@ class AppState:
 
         # Lazy-loaded
         self._loader:   Optional[DataLoader]       = None
+        self._bruteforce: Optional[BruteForceEngine] = None
         self._explorer: Optional[ExplorationEngine] = None
         self._evolver:  Optional[EvolutionEngine]   = None
 
         # SSE subscriber queues  { subscriber_id → queue }
         self._explore_subs: Dict[str, queue.Queue] = {}
+        self._bf_subs:      Dict[str, queue.Queue] = {}
         self._evolve_subs:  Dict[str, queue.Queue] = {}
 
         # Latest stats snapshots (for new subscribers joining mid-run)
         self._explore_stats: Optional[dict] = None
+        self._bf_stats:     Optional[dict] = None
         self._evolve_stats:  Optional[dict] = None
 
         # Active thread references
@@ -116,6 +121,34 @@ class AppState:
                 self._evolver = EvolutionEngine(
                     loader, output_dir=self.evolve_dir)
         return self._evolver
+
+    def bruteforcer(self) -> BruteForceEngine:
+        loader = self.loader()
+        with self._lock:
+            if self._bruteforce is None:
+                self._bruteforce = BruteForceEngine(
+                    loader, output_dir=self.explore_dir)
+        return self._bruteforce
+
+    def subscribe_bf(self, sub_id: str) -> queue.Queue:
+        q = queue.Queue(maxsize=50)
+        with self._lock:
+            self._bf_subs[sub_id] = q
+            if self._bf_stats:
+                try: q.put_nowait(self._bf_stats)
+                except queue.Full: pass
+        return q
+
+    def unsubscribe_bf(self, sub_id: str):
+        with self._lock:
+            self._bf_subs.pop(sub_id, None)
+
+    def push_bf(self, stats):
+        d = stats.to_dict()
+        d['type'] = 'brute_force'
+        with self._lock:
+            self._bf_stats = d
+            self._broadcast(self._bf_subs, d)
 
     # ── SSE pub/sub ────────────────────────────────────────────────────────
 
@@ -178,6 +211,7 @@ class AppState:
             "server":          "ok",
             "explore_running": explore_running,
             "evolve_running":  evolve_running,
+            "bf_running":      (self._bruteforce is not None and self._bruteforce.is_running()),
             "explore_stats":   self._explore_stats,
             "evolve_stats":    self._evolve_stats,
             "data_dir":        self.data_dir,
@@ -227,6 +261,15 @@ class Handler(BaseHTTPRequestHandler):
 
         elif path == "/api/data/info":
             self._handle_data_info()
+
+        elif path == "/api/brute/stream":
+            self._handle_sse_generic(
+                subscribe   = self.app.subscribe_bf,
+                unsubscribe = self.app.unsubscribe_bf,
+            )
+
+        elif path == "/api/brute/summary":
+            self._send(200, self.app._bf_stats or {})
 
         elif path == "/api/data/variables":
             self._send(200, {
@@ -304,6 +347,12 @@ class Handler(BaseHTTPRequestHandler):
             self._handle_evolve_start(body)
         elif path == "/api/evolve/stop":
             self._handle_evolve_stop()
+        elif path == "/api/brute/start":
+            self._handle_bf_start(body)
+        elif path == "/api/brute/stop":
+            self._handle_bf_stop()
+        elif path == "/api/dashboard/evaluate":
+            self._handle_dashboard_evaluate(body)
         else:
             self._send(404, {"error": "not found"})
 
@@ -459,19 +508,92 @@ class Handler(BaseHTTPRequestHandler):
         eng.request_stop()
         self._send(200, {"stopped": True, "message": "Stop signal sent"})
 
+    def _handle_bf_start(self, body: dict):
+        eng = self.app.bruteforcer()
+        if eng.is_running():
+            self._send(409, {"error": "Brute force already running"}); return
+        try:
+            cfg = BruteForceConfig.from_dict(body) if body else BruteForceConfig()
+        except Exception as e:
+            self._send(400, {"error": f"Bad config: {e}"}); return
+
+        def _run():
+            eng.run(
+                config      = cfg,
+                on_progress = self.app.push_bf,
+                on_save     = lambda rec: self.app.push_bf(eng.stats),
+            )
+            self.app.push_bf(eng.stats)
+
+        t = threading.Thread(target=_run, daemon=True)
+        t.start()
+        self._send(200, {"started": True, "batch_name": cfg.batch_name})
+
+    def _handle_bf_stop(self):
+        eng = self.app.bruteforcer()
+        if not eng.is_running():
+            self._send(200, {"stopped": False}); return
+        eng.request_stop()
+        self._send(200, {"stopped": True})
+
+    def _handle_dashboard_evaluate(self, body: dict):
+        tree = body.get("tree")
+        if not tree:
+            self._send(400, {"error": "tree required"}); return
+        try:
+            result = evaluate_formula_dashboard(tree, self.app.loader())
+            self._send(200, result)
+        except Exception as e:
+            self._send(500, {"error": str(e)})
+
+    def _handle_bf_start(self, body: dict):
+        eng = self.app.bruteforcer()
+        if eng.is_running():
+            self._send(409, {"error": "Brute force already running"}); return
+        try:
+            cfg = BruteForceConfig.from_dict(body) if body else BruteForceConfig()
+        except Exception as e:
+            self._send(400, {"error": f"Bad config: {e}"}); return
+
+        def _run():
+            eng.run(
+                config      = cfg,
+                on_progress = self.app.push_bf,
+                on_save     = lambda rec: self.app.push_bf(eng.stats),
+            )
+            self.app.push_bf(eng.stats)
+
+        t = threading.Thread(target=_run, daemon=True)
+        t.start()
+        self._send(200, {"started": True, "batch_name": cfg.batch_name})
+
+    def _handle_bf_stop(self):
+        eng = self.app.bruteforcer()
+        if not eng.is_running():
+            self._send(200, {"stopped": False}); return
+        eng.request_stop()
+        self._send(200, {"stopped": True})
+
+    def _handle_dashboard_evaluate(self, body: dict):
+        tree = body.get("tree")
+        if not tree:
+            self._send(400, {"error": "tree required"}); return
+        try:
+            result = evaluate_formula_dashboard(tree, self.app.loader())
+            self._send(200, result)
+        except Exception as e:
+            self._send(500, {"error": str(e)})
+
     # ── SSE ────────────────────────────────────────────────────────────────
 
     def _handle_sse_explore(self):
-        self._sse_loop(
-            subscribe   = self.app.subscribe_explore,
-            unsubscribe = self.app.unsubscribe_explore,
-        )
+        self._sse_loop(self.app.subscribe_explore, self.app.unsubscribe_explore)
 
     def _handle_sse_evolve(self):
-        self._sse_loop(
-            subscribe   = self.app.subscribe_evolve,
-            unsubscribe = self.app.unsubscribe_evolve,
-        )
+        self._sse_loop(self.app.subscribe_evolve, self.app.unsubscribe_evolve)
+
+    def _handle_sse_generic(self, subscribe, unsubscribe):
+        self._sse_loop(subscribe, unsubscribe)
 
     def _sse_loop(self, subscribe, unsubscribe):
         sub_id = _next_sub_id()

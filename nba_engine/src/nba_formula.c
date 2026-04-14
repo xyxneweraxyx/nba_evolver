@@ -29,13 +29,6 @@ static inline float _safef(float v) {
 /* ─────────────────────────────────────────────────────────────────────────────
  * SINGLE-GAME EVALUATION
  * ─────────────────────────────────────────────────────────────────────────────
- *
- * Executes the RPN instruction stream on a float stack.
- * Returns (home_score - away_score) — positive = predict home win.
- *
- * For IF nodes, we push all 4 operands then execute in one step:
- *   stack layout before IF_GT:  [..., c1, c2, v_true, v_false]
- *   result:                     [..., (c1 > c2 ? v_true : v_false)]
  */
 
 static float _eval_team(const Formula *f, const float *stats) {
@@ -44,15 +37,12 @@ static float _eval_team(const Formula *f, const float *stats) {
 
 #define PUSH(x)  do { stack[top++] = _safef(x); } while(0)
 #define POP()    (stack[--top])
-#define A        stack[top-1]
-#define B        stack[top-2]   /* B is deeper than A */
 
     for (int i = 0; i < f->length; i++) {
         const Instruction *ins = &f->ops[i];
 
         switch ((OpCode)ins->op) {
 
-        /* ── Leaves ──────────────────────────────────────────────────── */
         case OP_LOAD_VAR:
             PUSH(stats[ins->var_index]);
             break;
@@ -61,7 +51,6 @@ static float _eval_team(const Formula *f, const float *stats) {
             PUSH(ins->value);
             break;
 
-        /* ── Binary ──────────────────────────────────────────────────── */
         case OP_ADD: { float b=POP(), a=POP(); PUSH(a+b); break; }
         case OP_SUB: { float b=POP(), a=POP(); PUSH(a-b); break; }
         case OP_MUL: { float b=POP(), a=POP(); PUSH(a*b); break; }
@@ -75,7 +64,6 @@ static float _eval_team(const Formula *f, const float *stats) {
             break;
         }
 
-        /* ── Unary ───────────────────────────────────────────────────── */
         case OP_NEG:  { float a=POP(); PUSH(-a);                         break; }
         case OP_ABS:  { float a=POP(); PUSH(fabsf(a));                   break; }
         case OP_LOG:  { float a=POP(); PUSH(logf(fabsf(a)+1e-9f));       break; }
@@ -83,8 +71,6 @@ static float _eval_team(const Formula *f, const float *stats) {
         case OP_SQ:   { float a=POP(); PUSH(a*a);                        break; }
         case OP_INV:  { float a=POP(); PUSH(1.0f/(fabsf(a)+1e-9f));      break; }
 
-        /* ── Conditionals ────────────────────────────────────────────── */
-        /* Stack top-to-bottom before: v_false, v_true, c2, c1           */
         case OP_IF_GT:
         case OP_IF_LT:
         case OP_IF_GTE:
@@ -108,15 +94,12 @@ static float _eval_team(const Formula *f, const float *stats) {
             break;
         }
 
-        /* Guard against stack overflow */
         if (top >= NBA_MAX_STACK_DEPTH - 1) break;
         if (top < 0) { top = 0; }
     }
 
 #undef PUSH
 #undef POP
-#undef A
-#undef B
 
     return (top > 0) ? stack[0] : 0.0f;
 }
@@ -154,7 +137,7 @@ double nba_eval_accuracy(const Formula *f, const Dataset *ds) {
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
- * BLOCK EVALUATION (for interest filtering)
+ * BLOCK EVALUATION
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
@@ -198,25 +181,38 @@ FormulaScore nba_score_formula(const Formula *f, const Dataset *ds) {
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
- * INTEREST FILTER (early stopping)
+ * INTEREST FILTER WITH RAMPING THRESHOLD
  * ─────────────────────────────────────────────────────────────────────────────
  *
- * Evaluates the formula in blocks of `block_size` games.
- * After each block, checks if cumulative interest score >= min_interest.
- * Eliminates the formula early if it falls below the threshold.
+ * The threshold ramps linearly from (min_interest * start_fraction) at the
+ * first game to (min_interest) at the last game:
  *
- * Example: block_size=100, min_interest=0.20
- *   After games 0-99:   interest=0.12 → ELIMINATED
- *   (if interest >= 0.20 at each checkpoint → survives to end)
+ *   threshold(t) = min_interest * (start_fraction + (1 - start_fraction) * t)
+ *   where t = games_evaluated / total_games  (0.0 → 1.0)
+ *
+ * This prevents eliminating formulas that start slowly but are genuinely
+ * interesting over the full dataset. With start_fraction = 0.5:
+ *
+ *   t=0.0 → threshold = 0.5 * min_interest   (e.g. 55% accuracy for 60% target)
+ *   t=0.5 → threshold = 0.75 * min_interest  (e.g. 57.5% accuracy)
+ *   t=1.0 → threshold = 1.0 * min_interest   (e.g. 60% accuracy — full target)
+ *
+ * start_fraction = 1.0 reproduces the original constant-threshold behaviour.
+ * ─────────────────────────────────────────────────────────────────────────────
  */
 
 FormulaScore nba_filter_formula(const Formula *f, const Dataset *ds,
                                  int block_size, double min_interest,
+                                 double start_fraction,
                                  int *eliminated) {
     FormulaScore score = {0};
     *eliminated = 0;
 
     if (ds->n_games == 0 || block_size <= 0) return score;
+
+    /* Clamp start_fraction to [0, 1] */
+    if (start_fraction < 0.0) start_fraction = 0.0;
+    if (start_fraction > 1.0) start_fraction = 1.0;
 
     int total_correct = 0;
     int total_eval    = 0;
@@ -239,8 +235,11 @@ FormulaScore nba_filter_formula(const Formula *f, const Dataset *ds,
         double cum_acc      = (double)total_correct / total_eval;
         double cum_interest = fabs(cum_acc - 0.5) * 2.0;
 
-        /* Eliminate if below threshold */
-        if (cum_interest < min_interest) {
+        /* Ramping threshold: lenient at start, strict at end */
+        double t         = (double)total_eval / ds->n_games;
+        double threshold = min_interest * (start_fraction + (1.0 - start_fraction) * t);
+
+        if (cum_interest < threshold) {
             score.accuracy     = cum_acc;
             score.interest     = cum_interest;
             score.n_games_eval = total_eval;
@@ -296,12 +295,10 @@ int nba_validate_formula(const Formula *f) {
 
         if (stack_depth > NBA_MAX_STACK_DEPTH) return 0;
 
-        /* Validate var_index in range */
         if (ins->op == OP_LOAD_VAR && ins->var_index >= NBA_MAX_VARS)
             return 0;
     }
 
-    /* Formula must leave exactly one value on the stack */
     return (stack_depth == 1) ? 1 : 0;
 }
 

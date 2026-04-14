@@ -4,24 +4,19 @@ import { apiGet, apiPost } from '../hooks/useApi'
 import { useSSE } from '../hooks/useSSE'
 import { Card, SectionTitle, StatBox, Slider, LogBox, Tag, EmptyState, LiveDot, AccBadge, IntBadge } from '../components/Ui'
 
-// Interest threshold: 0=50/50 (any), 25=62.5%+, 50=75%+ (very selective)
-const INTEREST_LABELS = {
-  0: '50/50 (all)', 5: '52.5%+', 10: '55%+', 15: '57.5%+',
-  20: '60%+', 25: '62.5%+', 30: '65%+', 35: '67.5%+',
-  40: '70%+', 45: '72.5%+', 50: '75%+',
-}
+// interest_threshold is stored as accuracy % (e.g. 62.0 = 62.0% accuracy)
+// interest score = (acc% - 50) / 50  → 62% = 0.24 interest
 function interestLabel(v) {
-  const rounded = Math.round(v / 5) * 5
-  return INTEREST_LABELS[Math.min(50, Math.max(0, rounded))] ?? `${v}%`
+  return `${v.toFixed(1)}% accuracy`
 }
 
 const DEFAULT_CFG = {
   max_depth: 4, max_size: 50,
-  interest_threshold: 20,   // unified threshold (maps to both min_interest and save_min_interest)
+  interest_threshold: 56.0, // accuracy % threshold (61.0–65.0, maps to interest score)
   block_size: 100,
   fast_prefilter_n: 500,
   interest_mode: 'both',
-  max_saved: 500,
+  max_saved: 32,   // 0 = unlimited
   dedup_enabled: true,
   report_every: 200,
 }
@@ -92,7 +87,7 @@ export default function Generate({ onSendToEvolve }) {
 
   async function handleStart() {
     const name = `batch_${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}`
-    const interest = cfg.interest_threshold / 100
+    const interest = (cfg.interest_threshold - 50) / 50  // acc% → interest score
     setBatchName(name); setBatch([]); setPage(0); setSelected(null); setStats(null)
     setLogs([`[START] batch: ${name} — threshold: ${interestLabel(cfg.interest_threshold)}`])
     try {
@@ -137,22 +132,22 @@ export default function Generate({ onSendToEvolve }) {
             </div>
           </div>
 
-          {/* Interest threshold — unified */}
+          {/* Interest threshold — accuracy % */}
           <div style={{ marginTop: 20 }}>
             <div style={{ color:'rgba(255,255,255,0.35)', fontSize:10, fontFamily:'var(--font-mono)', letterSpacing:'0.08em', textTransform:'uppercase', marginBottom:12 }}>Interest threshold</div>
             <div className="slider-group">
-              <label>Min accuracy to keep</label>
+              <label>Min accuracy to keep (above 60.37% baseline)</label>
               <div className="slider-value" style={{ fontSize: 18 }}>
                 {interestLabel(cfg.interest_threshold)}
                 <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)', marginLeft: 8 }}>
-                  interest = {cfg.interest_threshold}%
+                  interest = {((cfg.interest_threshold - 50) / 50 * 100).toFixed(1)}%
                 </span>
               </div>
-              <input type="range" min={0} max={50} step={5} value={cfg.interest_threshold}
+              <input type="range" min={55.0} max={65.0} step={0.1} value={cfg.interest_threshold}
                 onChange={e => set('interest_threshold')(+e.target.value)} />
               <div style={{ display:'flex', justifyContent:'space-between', fontSize:9,
                 fontFamily:'var(--font-mono)', color:'rgba(255,255,255,0.25)', marginTop:4 }}>
-                <span>any</span><span>60%</span><span>65%</span><span>70%</span><span>75%+</span>
+                <span>55%</span><span>57.5%</span><span>60%</span><span>62.5%</span><span>65%</span>
               </div>
             </div>
           </div>
@@ -164,7 +159,18 @@ export default function Generate({ onSendToEvolve }) {
               <Slider label="Block size (games)" value={cfg.block_size} min={50} max={500} step={50} onChange={set('block_size')} />
               <Slider label="Fast pre-filter" value={cfg.fast_prefilter_n} min={0} max={2000} step={100} onChange={set('fast_prefilter_n')} />
               <Slider label="Report every N" value={cfg.report_every} min={50} max={1000} step={50} onChange={set('report_every')} />
-              <Slider label="Max saved (0=∞)" value={cfg.max_saved} min={0} max={5000} step={100} onChange={set('max_saved')} />
+              <div className="slider-group">
+                <label>Max saved (0 = ∞)</label>
+                <div className="slider-value">{cfg.max_saved === 0 ? '∞' : cfg.max_saved}</div>
+                <select value={cfg.max_saved} onChange={e => set('max_saved')(+e.target.value)}
+                  style={{ width:'100%', padding:'6px 8px', borderRadius:'var(--radius)',
+                    border:'1px solid rgba(255,255,255,0.15)', background:'rgba(255,255,255,0.08)',
+                    color:'#fff', fontFamily:'var(--font-mono)', fontSize:12, cursor:'pointer' }}>
+                  {[0,1,2,4,8,16,32,64,128,256].map(v => (
+                    <option key={v} value={v}>{v === 0 ? '∞ unlimited' : v}</option>
+                  ))}
+                </select>
+              </div>
             </div>
           </div>
 

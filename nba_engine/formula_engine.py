@@ -372,12 +372,18 @@ def random_formula(max_depth: int = 4, max_size: int = 60) -> Node:
     """
     Generate a random formula AST.
     Retries up to 20 times to respect max_size.
+
+    The root node is NEVER a bare ConstNode — constants produce zero signal
+    because home_score - away_score = C - C = 0 for any game, which means
+    the formula always predicts home and is useless.
     """
     for _ in range(20):
         f = _random_node(max_depth, max_size)
-        if f.size() <= max_size:
+        if f.size() <= max_size and not isinstance(f, ConstNode):
             return f
-    return _random_leaf()  # fallback
+    # Fallback: a single variable always has signal (home ≠ away)
+    name, idx = _sample_var()
+    return VarNode(name, idx)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # TREE TRAVERSAL
@@ -541,7 +547,10 @@ def mutate_subtree(root: Node, max_depth: int) -> Node:
     return root
 
 
-def mutate(root: Node, max_depth: int, strength: float = 0.5) -> Node:
+def mutate(root: Node, max_depth: int, strength: float = 0.5,
+           allow_constants: bool = True,
+           allow_operators: bool = True,
+           allow_variables: bool = True) -> Node:
     """
     Apply one random mutation, biased by strength (0.0–1.0).
 
@@ -549,7 +558,15 @@ def mutate(root: Node, max_depth: int, strength: float = 0.5) -> Node:
     strength=0.5 → balanced (default)
     strength=1.0 → violent: mostly subtree + hoist
 
-    Probability table:
+    allow_constants: enable mutate_const (tweak numeric values)
+    allow_operators: enable mutate_operator (swap +,-,*,/,max,etc.)
+    allow_variables: enable mutate_var_swap (swap stat variables)
+
+    Structural mutations (hoist, subtree, point) are always enabled.
+    When a type is disabled its probability is redistributed uniformly
+    to the structural mutations.
+
+    Probability table (all enabled):
       mutation       s=0.0   s=0.5   s=1.0
       hoist          0%      12%     25%
       subtree        0%      17%     35%
@@ -562,12 +579,15 @@ def mutate(root: Node, max_depth: int, strength: float = 0.5) -> Node:
     p_hoist    = s * 0.25
     p_subtree  = s * 0.35
     p_point    = 0.30
-    p_varswap  = 0.25 - s * 0.20
-    p_operator = 0.25 - s * 0.20
-    p_const    = 0.20 - s * 0.20
+    p_varswap  = (0.25 - s * 0.20) if allow_variables else 0.0
+    p_operator = (0.25 - s * 0.20) if allow_operators else 0.0
+    p_const    = (0.20 - s * 0.20) if allow_constants else 0.0
 
     total = p_hoist + p_subtree + p_point + p_varswap + p_operator + p_const
-    r     = random.random() * total
+    if total <= 0:
+        return root.clone()
+
+    r = random.random() * total
 
     if r < p_hoist:    return mutate_hoist(root)
     r -= p_hoist

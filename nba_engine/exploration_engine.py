@@ -352,6 +352,16 @@ class ExplorationEngine:
                         self._stats.n_invalid += 1
                     continue
 
+                # ── Constant formula check (2 random games) ────────────────
+                # A constant formula returns the same value for every game
+                # → home_score - away_score = C - C = 0 always → useless.
+                # Two game samples suffice: false positive rate is negligible
+                # for genuine non-constant formulas (~0 exact float collision).
+                if self._is_constant_quick(cf, ds_full):
+                    with self._lock:
+                        self._stats.n_invalid += 1
+                    continue
+
                 # ── Dedup ──────────────────────────────────────────────────
                 if config.dedup_enabled:
                     h = formula_hash(node)
@@ -366,8 +376,9 @@ class ExplorationEngine:
                     elim = [0]
                     fs, eliminated = self._engine.filter(
                         cf, ds_fast,
-                        block_size   = config.block_size,
-                        min_interest = config.fast_min_interest,
+                        block_size     = config.block_size,
+                        min_interest   = config.fast_min_interest,
+                        start_fraction = 0.5,
                     )
                     if eliminated or not self._direction_ok(fs, config):
                         with self._lock:
@@ -377,8 +388,9 @@ class ExplorationEngine:
                 # ── Full interest filter ───────────────────────────────────
                 fs, eliminated = self._engine.filter(
                     cf, ds_full,
-                    block_size   = config.block_size,
-                    min_interest = config.min_interest,
+                    block_size     = config.block_size,
+                    min_interest   = config.min_interest,
+                    start_fraction = 0.5,
                 )
 
                 if eliminated or not self._direction_ok(fs, config):
@@ -452,6 +464,37 @@ class ExplorationEngine:
         return self.stats
 
     # ── Helpers ────────────────────────────────────────────────────────────
+
+    def _is_constant_quick(self, cf, ds: CDataset, n_samples: int = 15) -> bool:
+        """
+        Detect constant-direction formulas — those that always predict the same
+        winner regardless of game context.
+
+        This catches two classes:
+          1. True constants:       formula(home) - formula(away) = same float always
+          2. Directional constants: the diff is always > 0 or always < 0
+                                    (e.g. `is_home * per` → always positive since
+                                     home is_home=1, away is_home=0)
+
+        Checks n_samples random games; if all predict the same direction → constant.
+
+        False positive rate for a genuine 65% formula (predicts home ~65% of games):
+          P(15 consecutive same direction) ≈ 0.65^15 + 0.35^15 ≈ 0.15% — negligible.
+
+        Cost: n_samples calls to nba_eval_single (C-level, still ~microseconds).
+        """
+        import random as _rng
+        n = ds.n_games
+        if n < 2:
+            return False
+        indices = _rng.sample(range(n), min(n_samples, n))
+        preds   = set()
+        for i in indices:
+            s = self._engine.eval_single(cf, ds.games[i])
+            preds.add(1 if s >= 0.0 else 0)
+            if len(preds) > 1:
+                return False   # predicts both directions → not constant
+        return True            # all same direction → directional constant
 
     def _is_constant_formula(self, cf, ds: CDataset,
                               sample: int = 50) -> bool:
